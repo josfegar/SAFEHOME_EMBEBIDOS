@@ -1,0 +1,181 @@
+#include "funciones.h"
+#include<stdio.h>
+#include<string.h>
+#include<stdlib.h>
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+volatile int ingreso=1;
+//FUNCIONES
+void interrupt_INT0_Init(){
+ cli();
+ EICRA = 0b11;
+ EIMSK |= (1 << INT0);     // Enable external interrupt INT0
+ sei();                    // Enable global interrupts
+}
+void interrupt_INT1_Init(){
+ cli();
+ EICRA = 0b11;
+ EIMSK |= (1 << INT1);     // Enable external interrupt INT0
+ sei();                    // Enable global interrupts
+}
+void interrupt_TIMER1_Init(){
+ cli(); //deshabilitar momentáneamente las interrupciones
+ TCCR1B = 0b101; //preescalador 1024
+ TIMSK1 = 1; // habilitar interrupcion por desbordamiento
+ sei(); //habilitar las interrupciones
+ TCNT1 = 55000; //5s // tiempo de la interrupcion
+}
+//INTERRUPCIONES
+ISR(INT0_vect){//ventana
+   serial_println_str("AT+CMGF=1\r"); //Set the module to SMS mode
+   serial_println_str("AT+CMGS=\"+593993791454\"\r"); //Your phone number don't forget to include your country code, example +212123456789"
+   serial_println_str("Se ha roto una ventana");//enviar notificacion
+   PORTC = ((1 << PC1)); //encender alarma 
+   _delay_ms(2000);
+   PORTC = ((0 << PC1)); //apagar alarma
+}
+ISR(INT1_vect){//PIR
+   serial_println_str("AT+CMGF=1\r"); //Set the module to SMS mode
+   serial_println_str("AT+CMGS=\"+593993791454\"\r"); //Your phone number don't forget to include your country code, example +212123456789"
+   serial_println_str("El sensor ha detectado presencia");//enviar notificacion
+}
+ISR(TIMER1_OVF_vect){
+   if(ingreso!=1){
+      serial_println_str("AT+CMGF=1\r"); //Set the module to SMS mode
+      serial_println_str("AT+CMGS=\"+593993791454\"\r"); //Your phone number don't forget to include your country code, example +212123456789"
+      serial_println_str("Ha pasado el tiempo necesario para ingresar la contraseña");//enviar notificacion
+      //TCNT1 = 64000;
+      PORTC = ((1 << PC1)); }//encender alarma 
+}
+
+//iniciar entradas PD2-PIR,PC0-VENTANA, PC2-PUERTA1, PC3-PUERTA2
+//iniciar salidas PC1 ALARMA,
+int main(){ 
+      interrupt_INT0_Init(); //activa la ejecución de interrupciones durante la ejecución
+      interrupt_INT1_Init();
+      DDRC |= ((1<<DDC1)); // ASIGNAMOS EL PUERTO PC1 COMO SALIDA
+      serial_begin();
+      i2c_init();
+      lcd_init();
+      kbrd_init();
+      lcd_cursor(0,0);
+      lcd_msg("SAFE");
+      lcd_cursor(1,0);
+      lcd_msg("HOME");
+      char key[1];
+      char pswrd[]="555111";
+      char pswuser[]="";
+      int size=0;
+      int intentos=0;
+     while (1){
+      if((PINC&(1<<PINC0))|(ingreso!=1)){ //verifica que la puerta 1 está abierta y si fue validado el ingreso
+	 if((PINC&(1<<PINC0))){ 
+	    serial_println_str("AT+CMGF=1\r"); //Set the module to SMS mode
+	    serial_println_str("AT+CMGS=\"+593993791454\"\r"); //Your phone number don't forget to include your country code, example +212123456789"
+	    serial_println_str("La puerta 1 esta abierta");}//enviar notificacion
+	 interrupt_TIMER1_Init();
+	 ingreso=0;
+	 if(size==0){
+	 lcd_init();
+	 lcd_cursor(0,0);
+	 lcd_msg("Ingrese");
+	 lcd_cursor(1,0);
+	 lcd_msg("Contrasena");
+	 lcd_init();
+	 }
+	 key[0]=kbrd_read();
+	 if(key[0]!=0){
+	    pswuser[size]=key[0];
+	    lcd_init();
+	    lcd_cursor(0,0);
+	    lcd_msg(pswuser);
+	    key[0]=0;
+	    size++;
+	 }
+	 if (size==6){
+	    lcd_init();
+	    if(strcmp(pswrd, pswuser)==0){   
+	       lcd_cursor(0,0);
+	       lcd_msg("La contrasena es");
+	       lcd_cursor(1,0);
+	       lcd_msg("correcta");
+	       ingreso=1;
+	       size=0;}
+	       else{
+	       lcd_cursor(0,0);
+	       lcd_msg("La contrasena es");
+	       lcd_cursor(1,0);
+	       lcd_msg("incorrecta");
+	       size=0;
+	       PORTC = ((0 << PC1)); //apagar alarma
+	       int n;
+		  for(n=0;n<6;n++){
+		     pswuser[n]='-';
+		  }
+	       intentos++;}
+	 }
+	 if(intentos>=2){
+	    lcd_init();
+	    lcd_cursor(0,0);
+	    lcd_msg("Intento fallido");
+	    serial_println_str("AT+CMGF=1\r"); //Set the module to SMS mode
+	    serial_println_str("AT+CMGS=\"+593993791454\"\r"); //Your phone number don't forget to include your country code, example +212123456789"
+	    serial_println_str("Se ha ingresado una contraseña incorrecta reiteradamente");//enviar notificacion
+	    PORTC = ((1 << PC1)); //encender alarma 
+	    }
+	 if(ingreso==1){
+	    lcd_init();
+	    lcd_cursor(0,0);
+	    lcd_msg("Ingreso Exitoso");     
+	    lcd_init();
+	    lcd_cursor(0,0);
+	    lcd_msg("¿Cambiar");
+	    lcd_cursor(1,0);
+	    lcd_msg("contrasena?");
+	    lcd_init();
+	    lcd_cursor(0,0);
+	    lcd_msg("1:SI      2:NO");
+	    key[0]=kbrd_read();
+	    key[0]=0;
+	    while((key[0]!='1')|(key[0]!='2')){
+	       key[0]=kbrd_read();
+	       if(key[0]=='1'){
+		  int n;
+		  for(n=0;n<6;n++){
+		     pswrd[n]='-';
+		  }
+		  lcd_init();
+		  lcd_cursor(0,0);
+		  lcd_msg("Ingrese nueva");
+		  lcd_cursor(1,0);
+		  lcd_msg("contrasena");
+		  key[0]=kbrd_read(); 
+		  while(size!=6){
+		     key[0]=kbrd_read(); 
+		     if(key[0]!=0){
+		     pswrd[size]=key[0];
+		     lcd_init();
+		     lcd_cursor(0,0);
+		     lcd_msg(pswrd);
+		     key[0]=0;
+		     size++;
+		     }}
+		  size=0;}
+		  else{	     
+		     lcd_init();
+		     lcd_cursor(0,0);
+		     lcd_msg("SAFE");
+		     lcd_cursor(1,0);
+		     lcd_msg("HOME");
+		     size=0;}
+		     }}
+	 }
+	 if((PINC&(1<<PINC2))){ //verifica si se abrió la puerta 2
+	       serial_println_str("AT+CMGF=1\r"); //Set the module to SMS mode
+	       serial_println_str("AT+CMGS=\"+593993791454\"\r"); //Your phone number don't forget to include your country code, example +212123456789"
+	       serial_println_str("La puerta 2 esta abierta");//enviar notificacion
+	    }
+	 }
+      return 0;
+ }
